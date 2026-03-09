@@ -1,11 +1,17 @@
 "use strict";
 
 const MESSAGE_TYPES = {
-  GENERATE_SUMMARY: "GENERATE_SUMMARY"
+  GENERATE_SUMMARY: "GENERATE_SUMMARY",
+  FETCH_YOUTUBE_SUBTITLE: "FETCH_YOUTUBE_SUBTITLE"
 };
 
 const PANEL_ID = "bss-root-panel";
 const STYLE_ID = "bss-style-link";
+const PANEL_SCALE_STORAGE_KEY = "bss-panel-scale";
+const PANEL_SCALE_DEFAULT = 1;
+const PANEL_SCALE_STEP = 0.1;
+const PANEL_SCALE_MIN = 0.8;
+const PANEL_SCALE_MAX = 1.6;
 
 let currentUrl = location.href;
 let mounted = false;
@@ -13,11 +19,14 @@ let busy = false;
 let lastSummaryText = "";
 let lastTranscriptText = "";
 let lastVideoTitle = "";
+let panelScale = loadPanelScale();
 
 init();
 
 function init() {
   ensureStyles();
+  setupRuntimeMessageListener();
+  setupWindowResizeListener();
   syncByUrl();
   setInterval(() => {
     const nextUrl = location.href;
@@ -27,6 +36,68 @@ function init() {
       onUrlChanged(previousUrl, nextUrl);
     }
   }, 500);
+}
+
+function setupWindowResizeListener() {
+  window.addEventListener("resize", () => {
+    const panel = document.getElementById(PANEL_ID);
+    if (!panel) {
+      return;
+    }
+    keepPanelInViewport(panel);
+  });
+}
+
+function setupRuntimeMessageListener() {
+  chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+    if (!message || message.type !== MESSAGE_TYPES.FETCH_YOUTUBE_SUBTITLE) {
+      return false;
+    }
+
+    fetchYouTubeSubtitleFromPage(message.payload || {})
+      .then((data) => sendResponse({ ok: true, data }))
+      .catch((error) =>
+        sendResponse({
+          ok: false,
+          error: {
+            message: error?.message || "Failed to fetch subtitle in page context."
+          }
+        })
+      );
+
+    return true;
+  });
+}
+
+async function fetchYouTubeSubtitleFromPage(payload) {
+  if (!isYouTubeVideo()) {
+    throw new Error("Current page is not a YouTube watch page.");
+  }
+
+  const subtitleUrl = String(payload.subtitleUrl || "").trim();
+  if (!subtitleUrl) {
+    throw new Error("Missing YouTube subtitle URL.");
+  }
+
+  let response;
+  try {
+    response = await fetch(subtitleUrl, {
+      method: "GET",
+      credentials: "include",
+      headers: {
+        accept: "*/*"
+      },
+      cache: "no-store"
+    });
+  } catch (error) {
+    throw new Error(`Page subtitle fetch failed: ${error?.message || "Network error"}`);
+  }
+
+  if (!response.ok) {
+    throw new Error(`Page subtitle fetch failed: HTTP ${response.status}`);
+  }
+
+  return await response.text();
 }
 
 function ensureStyles() {
@@ -79,7 +150,13 @@ function mountPanel() {
   panel.innerHTML = `
     <div class="bss-header">
       <div class="bss-title">字幕摘要</div>
-      <div id="bss-status" class="bss-status">待生成</div>
+      <div class="bss-header-right">
+        <div id="bss-status" class="bss-status">待生成</div>
+        <div class="bss-zoom-actions" aria-label="面板缩放">
+          <button id="bss-zoom-out-btn" class="bss-zoom-btn" type="button" aria-label="缩小面板">－</button>
+          <button id="bss-zoom-in-btn" class="bss-zoom-btn" type="button" aria-label="放大面板">＋</button>
+        </div>
+      </div>
     </div>
     <div class="bss-actions">
       <button id="bss-generate-btn" class="bss-btn bss-btn-primary" type="button">生成摘要</button>
@@ -88,7 +165,7 @@ function mountPanel() {
     </div>
     <div id="bss-error" class="bss-error" aria-live="polite"></div>
     <div id="bss-content" class="bss-content">
-      <div class=”bss-placeholder”>${isYouTubeVideo() ? “请先在YouTube播放器中开启CC字幕（点击播放器右下角字幕按钮），再点击\u201c生成摘要\u201d。” : “建议先点击视频播放器里的\u201cAI字幕\u201d生成字幕，再点击\u201c生成摘要\u201d以获得最准确的内容。”}</div>
+      <div class="bss-placeholder">${isYouTubeVideo() ? "请先在YouTube播放器中开启CC字幕（点击播放器右下角字幕按钮），再点击“生成摘要”。" : "建议先点击视频播放器里的“AI字幕”生成字幕，再点击“生成摘要”以获得最准确的内容。"}</div>
     </div>
   `;
 
@@ -97,9 +174,15 @@ function mountPanel() {
   const copyBtn = document.getElementById("bss-copy-btn");
 
   const downloadBtn = document.getElementById("bss-download-btn");
+  const zoomOutBtn = document.getElementById("bss-zoom-out-btn");
+  const zoomInBtn = document.getElementById("bss-zoom-in-btn");
   generateBtn?.addEventListener("click", onGenerateClicked);
   copyBtn?.addEventListener("click", onCopyClicked);
   downloadBtn?.addEventListener("click", onDownloadClicked);
+  zoomOutBtn?.addEventListener("click", onZoomOutClicked);
+  zoomInBtn?.addEventListener("click", onZoomInClicked);
+
+  applyPanelScale(panel);
   makePanelDraggable(panel);
 }
 
@@ -151,6 +234,86 @@ function unmountPanel() {
   lastSummaryText = "";
   lastTranscriptText = "";
   lastVideoTitle = "";
+}
+
+function onZoomOutClicked() {
+  adjustPanelScale(-PANEL_SCALE_STEP);
+}
+
+function onZoomInClicked() {
+  adjustPanelScale(PANEL_SCALE_STEP);
+}
+
+function adjustPanelScale(delta) {
+  const panel = document.getElementById(PANEL_ID);
+  if (!panel) {
+    return;
+  }
+  const next = roundScale(panelScale + delta);
+  panelScale = clampScale(next);
+  savePanelScale(panelScale);
+  applyPanelScale(panel);
+}
+
+function applyPanelScale(panel) {
+  panel.style.setProperty("--bss-panel-scale", String(panelScale));
+  keepPanelInViewport(panel);
+  updateZoomButtons();
+}
+
+function updateZoomButtons() {
+  const zoomOutBtn = document.getElementById("bss-zoom-out-btn");
+  const zoomInBtn = document.getElementById("bss-zoom-in-btn");
+  if (zoomOutBtn) {
+    zoomOutBtn.disabled = panelScale <= PANEL_SCALE_MIN;
+    zoomOutBtn.title = `当前缩放：${Math.round(panelScale * 100)}%`;
+  }
+  if (zoomInBtn) {
+    zoomInBtn.disabled = panelScale >= PANEL_SCALE_MAX;
+    zoomInBtn.title = `当前缩放：${Math.round(panelScale * 100)}%`;
+  }
+}
+
+function keepPanelInViewport(panel) {
+  const hasCustomPosition = panel.style.left && panel.style.top;
+  if (!hasCustomPosition) {
+    return;
+  }
+  const maxLeft = Math.max(0, window.innerWidth - panel.offsetWidth);
+  const maxTop = Math.max(0, window.innerHeight - panel.offsetHeight);
+  const left = Math.min(maxLeft, Math.max(0, parseFloat(panel.style.left) || 0));
+  const top = Math.min(maxTop, Math.max(0, parseFloat(panel.style.top) || 0));
+  panel.style.left = `${left}px`;
+  panel.style.top = `${top}px`;
+}
+
+function loadPanelScale() {
+  try {
+    const raw = localStorage.getItem(PANEL_SCALE_STORAGE_KEY);
+    const value = Number(raw);
+    if (Number.isFinite(value)) {
+      return clampScale(roundScale(value));
+    }
+  } catch (_error) {
+    // Ignore storage access failures.
+  }
+  return PANEL_SCALE_DEFAULT;
+}
+
+function savePanelScale(value) {
+  try {
+    localStorage.setItem(PANEL_SCALE_STORAGE_KEY, String(value));
+  } catch (_error) {
+    // Ignore storage access failures.
+  }
+}
+
+function roundScale(value) {
+  return Math.round(value * 10) / 10;
+}
+
+function clampScale(value) {
+  return Math.max(PANEL_SCALE_MIN, Math.min(PANEL_SCALE_MAX, value));
 }
 
 function onGenerateClicked() {

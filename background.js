@@ -2,6 +2,7 @@
 
 const MESSAGE_TYPES = {
   GENERATE_SUMMARY: "GENERATE_SUMMARY",
+  FETCH_YOUTUBE_SUBTITLE: "FETCH_YOUTUBE_SUBTITLE",
 };
 
 const ERROR_CODES = {
@@ -180,8 +181,8 @@ async function handleYouTubeSummary(pageUrl, title, tabId, settings) {
     );
   }
 
+  const subtitleData = await fetchYouTubeSubtitle(captured.url, tabId);
   delete capturedSubtitleUrls[tabId];
-  const subtitleData = await fetchYouTubeSubtitle(captured.url);
   const transcript = buildYouTubeTranscript(subtitleData);
   const summaryResult = await generateSummary(transcript, title, settings);
 
@@ -219,12 +220,32 @@ function parseYouTubeVideoId(url) {
   }
 }
 
-async function fetchYouTubeSubtitle(subtitleUrl) {
+async function fetchYouTubeSubtitle(subtitleUrl, tabId) {
+  try {
+    return await fetchYouTubeSubtitleDirect(subtitleUrl);
+  } catch (error) {
+    const shouldFallbackToTab =
+      error instanceof ExtensionError &&
+      error.code === ERROR_CODES.SUBTITLE_PARSE_FAILED &&
+      /HTTP (?:403|429)/.test(String(error.message || ""));
+
+    if (!shouldFallbackToTab || tabId <= 0) {
+      throw error;
+    }
+
+    return await fetchYouTubeSubtitleFromTab(tabId, subtitleUrl, error);
+  }
+}
+
+async function fetchYouTubeSubtitleDirect(subtitleUrl) {
   let response;
   try {
     response = await fetch(subtitleUrl, {
       method: "GET",
       credentials: "include",
+      headers: {
+        accept: "*/*",
+      },
     });
   } catch (error) {
     throw new ExtensionError(
@@ -242,9 +263,51 @@ async function fetchYouTubeSubtitle(subtitleUrl) {
     );
   }
 
+  return parseYouTubeSubtitleJson(await response.text());
+}
+
+async function fetchYouTubeSubtitleFromTab(tabId, subtitleUrl, originalError) {
+  const response = await new Promise((resolve, reject) => {
+    chrome.tabs.sendMessage(
+      tabId,
+      {
+        type: MESSAGE_TYPES.FETCH_YOUTUBE_SUBTITLE,
+        payload: { subtitleUrl },
+      },
+      (result) => {
+        if (chrome.runtime.lastError) {
+          reject(
+            new ExtensionError(
+              ERROR_CODES.SUBTITLE_PARSE_FAILED,
+              "Failed to fetch YouTube subtitle from page context.",
+              chrome.runtime.lastError.message,
+            ),
+          );
+          return;
+        }
+        resolve(result || null);
+      },
+    );
+  });
+
+  if (!response || !response.ok) {
+    throw new ExtensionError(
+      ERROR_CODES.SUBTITLE_PARSE_FAILED,
+      "YouTube subtitle fallback fetch failed.",
+      {
+        originalError: normalizeError(originalError),
+        fallbackError: response?.error || null,
+      },
+    );
+  }
+
+  return parseYouTubeSubtitleJson(response.data);
+}
+
+function parseYouTubeSubtitleJson(raw) {
   let json;
   try {
-    json = await response.json();
+    json = typeof raw === "string" ? JSON.parse(raw) : raw;
   } catch (error) {
     throw new ExtensionError(
       ERROR_CODES.SUBTITLE_PARSE_FAILED,
