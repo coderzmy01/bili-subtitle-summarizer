@@ -47,6 +47,11 @@
   cursor: grabbing;
 }
 
+#bss-root-panel.bss-resizing,
+#bss-root-panel.bss-resizing * {
+  user-select: none;
+}
+
 .bss-title {
   font-size: calc(16px * var(--bss-panel-scale));
   font-weight: 700;
@@ -141,6 +146,8 @@
 }
 
 .bss-content {
+  flex: 1 1 auto;
+  min-height: 0;
   padding: 8px 14px 14px;
   overflow-y: auto;
   line-height: 1.6;
@@ -214,6 +221,78 @@
   padding: 10px;
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   font-size: calc(12px * var(--bss-panel-scale));
+}
+
+.bss-resize-handle {
+  position: absolute;
+  z-index: 5;
+  background: transparent;
+}
+
+.bss-resize-handle-n,
+.bss-resize-handle-s {
+  left: 10px;
+  right: 10px;
+  height: 8px;
+}
+
+.bss-resize-handle-e,
+.bss-resize-handle-w {
+  top: 10px;
+  bottom: 10px;
+  width: 8px;
+}
+
+.bss-resize-handle-n {
+  top: 0;
+  cursor: ns-resize;
+}
+
+.bss-resize-handle-s {
+  bottom: 0;
+  cursor: ns-resize;
+}
+
+.bss-resize-handle-e {
+  right: 0;
+  cursor: ew-resize;
+}
+
+.bss-resize-handle-w {
+  left: 0;
+  cursor: ew-resize;
+}
+
+.bss-resize-handle-ne,
+.bss-resize-handle-nw,
+.bss-resize-handle-se,
+.bss-resize-handle-sw {
+  width: 12px;
+  height: 12px;
+}
+
+.bss-resize-handle-ne {
+  top: 0;
+  right: 0;
+  cursor: nesw-resize;
+}
+
+.bss-resize-handle-nw {
+  top: 0;
+  left: 0;
+  cursor: nwse-resize;
+}
+
+.bss-resize-handle-se {
+  right: 0;
+  bottom: 0;
+  cursor: nwse-resize;
+}
+
+.bss-resize-handle-sw {
+  left: 0;
+  bottom: 0;
+  cursor: nesw-resize;
 }
 
 @media (max-width: 1280px) {

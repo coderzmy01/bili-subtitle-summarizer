@@ -8,10 +8,15 @@ const MESSAGE_TYPES = {
 const PANEL_ID = "bss-root-panel";
 const STYLE_ID = "bss-style-link";
 const PANEL_SCALE_STORAGE_KEY = "bss-panel-scale";
+const PANEL_SIZE_STORAGE_KEY = "bss-panel-size";
 const PANEL_SCALE_DEFAULT = 1;
 const PANEL_SCALE_STEP = 0.1;
 const PANEL_SCALE_MIN = 0.8;
 const PANEL_SCALE_MAX = 1.6;
+const PANEL_MIN_WIDTH = 280;
+const PANEL_MAX_WIDTH = 960;
+const PANEL_MIN_HEIGHT = 220;
+const PANEL_MAX_HEIGHT = 1200;
 
 let currentUrl = location.href;
 let mounted = false;
@@ -20,6 +25,7 @@ let lastSummaryText = "";
 let lastTranscriptText = "";
 let lastVideoTitle = "";
 let panelScale = loadPanelScale();
+let panelBaseSize = loadPanelBaseSize();
 
 init();
 
@@ -44,7 +50,7 @@ function setupWindowResizeListener() {
     if (!panel) {
       return;
     }
-    keepPanelInViewport(panel);
+    applyPanelScale(panel);
   });
 }
 
@@ -162,11 +168,20 @@ function mountPanel() {
       <button id="bss-generate-btn" class="bss-btn bss-btn-primary" type="button">生成摘要</button>
       <button id="bss-copy-btn" class="bss-btn bss-btn-secondary" type="button" disabled>复制摘要</button>
       <button id="bss-download-btn" class="bss-btn bss-btn-secondary" type="button" disabled>下载字幕</button>
+      <button id="bss-download-summary-btn" class="bss-btn bss-btn-secondary" type="button" disabled>导出摘要</button>
     </div>
     <div id="bss-error" class="bss-error" aria-live="polite"></div>
     <div id="bss-content" class="bss-content">
       <div class="bss-placeholder">${isYouTubeVideo() ? "请先在YouTube播放器中开启CC字幕（点击播放器右下角字幕按钮），再点击“生成摘要”。" : "建议先点击视频播放器里的“AI字幕”生成字幕，再点击“生成摘要”以获得最准确的内容。"}</div>
     </div>
+    <div class="bss-resize-handle bss-resize-handle-n" data-dir="n" aria-hidden="true"></div>
+    <div class="bss-resize-handle bss-resize-handle-e" data-dir="e" aria-hidden="true"></div>
+    <div class="bss-resize-handle bss-resize-handle-s" data-dir="s" aria-hidden="true"></div>
+    <div class="bss-resize-handle bss-resize-handle-w" data-dir="w" aria-hidden="true"></div>
+    <div class="bss-resize-handle bss-resize-handle-ne" data-dir="ne" aria-hidden="true"></div>
+    <div class="bss-resize-handle bss-resize-handle-nw" data-dir="nw" aria-hidden="true"></div>
+    <div class="bss-resize-handle bss-resize-handle-se" data-dir="se" aria-hidden="true"></div>
+    <div class="bss-resize-handle bss-resize-handle-sw" data-dir="sw" aria-hidden="true"></div>
   `;
 
   document.body.appendChild(panel);
@@ -174,16 +189,19 @@ function mountPanel() {
   const copyBtn = document.getElementById("bss-copy-btn");
 
   const downloadBtn = document.getElementById("bss-download-btn");
+  const downloadSummaryBtn = document.getElementById("bss-download-summary-btn");
   const zoomOutBtn = document.getElementById("bss-zoom-out-btn");
   const zoomInBtn = document.getElementById("bss-zoom-in-btn");
   generateBtn?.addEventListener("click", onGenerateClicked);
   copyBtn?.addEventListener("click", onCopyClicked);
   downloadBtn?.addEventListener("click", onDownloadClicked);
+  downloadSummaryBtn?.addEventListener("click", onDownloadSummaryClicked);
   zoomOutBtn?.addEventListener("click", onZoomOutClicked);
   zoomInBtn?.addEventListener("click", onZoomInClicked);
 
   applyPanelScale(panel);
   makePanelDraggable(panel);
+  makePanelResizable(panel);
 }
 
 function makePanelDraggable(panel) {
@@ -257,7 +275,11 @@ function adjustPanelScale(delta) {
 
 function applyPanelScale(panel) {
   panel.style.setProperty("--bss-panel-scale", String(panelScale));
-  keepPanelInViewport(panel);
+  if (panelBaseSize) {
+    applyPanelBaseSize(panel);
+  } else {
+    keepPanelInViewport(panel);
+  }
   updateZoomButtons();
 }
 
@@ -287,6 +309,125 @@ function keepPanelInViewport(panel) {
   panel.style.top = `${top}px`;
 }
 
+function makePanelResizable(panel) {
+  const handles = panel.querySelectorAll(".bss-resize-handle");
+  if (!handles.length) {
+    return;
+  }
+
+  let isResizing = false;
+  let resizeDir = "";
+  let startX = 0;
+  let startY = 0;
+  let startLeft = 0;
+  let startTop = 0;
+  let startWidth = 0;
+  let startHeight = 0;
+  let startRight = 0;
+  let startBottom = 0;
+
+  handles.forEach((handle) => {
+    handle.addEventListener("mousedown", (e) => {
+      const dir = handle.getAttribute("data-dir");
+      if (!dir) {
+        return;
+      }
+      const rect = panel.getBoundingClientRect();
+      isResizing = true;
+      resizeDir = dir;
+      startX = e.clientX;
+      startY = e.clientY;
+      startLeft = rect.left;
+      startTop = rect.top;
+      startWidth = rect.width;
+      startHeight = rect.height;
+      startRight = rect.right;
+      startBottom = rect.bottom;
+
+      panel.style.right = "auto";
+      panel.style.left = `${startLeft}px`;
+      panel.style.top = `${startTop}px`;
+      panel.style.width = `${startWidth}px`;
+      panel.style.height = `${startHeight}px`;
+      panel.classList.add("bss-resizing");
+      e.preventDefault();
+      e.stopPropagation();
+    });
+  });
+
+  document.addEventListener("mousemove", (e) => {
+    if (!isResizing) {
+      return;
+    }
+
+    const dx = e.clientX - startX;
+    const dy = e.clientY - startY;
+    const maxWidth = getMaxPanelWidth();
+    const maxHeight = getMaxPanelHeight();
+    let nextLeft = startLeft;
+    let nextTop = startTop;
+    let nextWidth = startWidth;
+    let nextHeight = startHeight;
+
+    if (resizeDir.includes("e")) {
+      const limit = Math.min(maxWidth, window.innerWidth - startLeft);
+      nextWidth = clampValue(startWidth + dx, PANEL_MIN_WIDTH, Math.max(PANEL_MIN_WIDTH, limit));
+    }
+    if (resizeDir.includes("s")) {
+      const limit = Math.min(maxHeight, window.innerHeight - startTop);
+      nextHeight = clampValue(startHeight + dy, PANEL_MIN_HEIGHT, Math.max(PANEL_MIN_HEIGHT, limit));
+    }
+    if (resizeDir.includes("w")) {
+      const limit = Math.min(maxWidth, startRight);
+      nextWidth = clampValue(startWidth - dx, PANEL_MIN_WIDTH, Math.max(PANEL_MIN_WIDTH, limit));
+      nextLeft = startRight - nextWidth;
+    }
+    if (resizeDir.includes("n")) {
+      const limit = Math.min(maxHeight, startBottom);
+      nextHeight = clampValue(startHeight - dy, PANEL_MIN_HEIGHT, Math.max(PANEL_MIN_HEIGHT, limit));
+      nextTop = startBottom - nextHeight;
+    }
+
+    panel.style.left = `${Math.round(nextLeft)}px`;
+    panel.style.top = `${Math.round(nextTop)}px`;
+    panel.style.width = `${Math.round(nextWidth)}px`;
+    panel.style.height = `${Math.round(nextHeight)}px`;
+    e.preventDefault();
+  });
+
+  document.addEventListener("mouseup", () => {
+    if (!isResizing) {
+      return;
+    }
+    isResizing = false;
+    panel.classList.remove("bss-resizing");
+    const baseWidth = roundPanelSize(panel.offsetWidth / panelScale);
+    const baseHeight = roundPanelSize(panel.offsetHeight / panelScale);
+    panelBaseSize = { width: baseWidth, height: baseHeight };
+    savePanelBaseSize(panelBaseSize);
+  });
+}
+
+function applyPanelBaseSize(panel) {
+  if (!panelBaseSize) {
+    return;
+  }
+  const width = clampValue(
+    panelBaseSize.width * panelScale,
+    PANEL_MIN_WIDTH,
+    getMaxPanelWidth()
+  );
+  const height = clampValue(
+    panelBaseSize.height * panelScale,
+    PANEL_MIN_HEIGHT,
+    getMaxPanelHeight()
+  );
+
+  panel.style.width = `${Math.round(width)}px`;
+  panel.style.height = `${Math.round(height)}px`;
+  keepPanelInViewport(panel);
+}
+
 function loadPanelScale() {
   try {
     const raw = localStorage.getItem(PANEL_SCALE_STORAGE_KEY);
@@ -314,6 +455,54 @@ function roundScale(value) {
 
 function clampScale(value) {
   return Math.max(PANEL_SCALE_MIN, Math.min(PANEL_SCALE_MAX, value));
+}
+
+function loadPanelBaseSize() {
+  try {
+    const raw = localStorage.getItem(PANEL_SIZE_STORAGE_KEY);
+    if (!raw) {
+      return null;
+    }
+    const parsed = JSON.parse(raw);
+    const width = Number(parsed?.width);
+    const height = Number(parsed?.height);
+    if (!Number.isFinite(width) || !Number.isFinite(height)) {
+      return null;
+    }
+    return {
+      width: clampValue(width, PANEL_MIN_WIDTH, PANEL_MAX_WIDTH),
+      height: clampValue(height, PANEL_MIN_HEIGHT, PANEL_MAX_HEIGHT)
+    };
+  } catch (_error) {
+    // Ignore storage access failures.
+  }
+  return null;
+}
+
+function savePanelBaseSize(size) {
+  try {
+    localStorage.setItem(PANEL_SIZE_STORAGE_KEY, JSON.stringify(size));
+  } catch (_error) {
+    // Ignore storage access failures.
+  }
+}
+
+function getMaxPanelWidth() {
+  const viewportLimit = window.innerWidth - 8;
+  return Math.max(PANEL_MIN_WIDTH, Math.min(PANEL_MAX_WIDTH, viewportLimit));
+}
+
+function getMaxPanelHeight() {
+  const viewportLimit = window.innerHeight - 8;
+  return Math.max(PANEL_MIN_HEIGHT, Math.min(PANEL_MAX_HEIGHT, viewportLimit));
+}
+
+function clampValue(value, min, max) {
+  return Math.max(min, Math.min(max, value));
+}
+
+function roundPanelSize(value) {
+  return Math.round(value * 10) / 10;
 }
 
 function onGenerateClicked() {
@@ -360,7 +549,7 @@ function onGenerateClicked() {
       const data = response.data || {};
       const summaryStructured = data.summaryStructured || {};
       const summaryText = String(data.summaryText || "").trim();
-      lastSummaryText = summaryText || buildDisplayText(summaryStructured);
+      lastSummaryText = buildSummaryText(summaryStructured, summaryText);
       lastTranscriptText = String(data.transcriptText || "").trim();
 
       toggleButtons();
@@ -524,6 +713,83 @@ function buildDisplayText(structured) {
   return lines.join("\n").trim();
 }
 
+function buildSummaryText(structured, raw) {
+  const structuredText = buildDisplayText(structured);
+  if (structuredText) {
+    return structuredText;
+  }
+  return normalizeRawSummaryText(raw);
+}
+
+function normalizeRawSummaryText(raw) {
+  const cleaned = String(raw || "")
+    .trim()
+    .replace(/^```(?:json|text|markdown)?/i, "")
+    .replace(/```$/i, "")
+    .trim();
+  if (!cleaned) {
+    return "";
+  }
+
+  try {
+    const parsed = JSON.parse(cleaned);
+    if (parsed && typeof parsed === "object") {
+      const lines = formatObjectToLines(parsed);
+      const parsedText = lines.join("\n").trim();
+      if (parsedText) {
+        return parsedText;
+      }
+    }
+  } catch (_error) {
+    // Keep original text when AI output is not JSON.
+  }
+
+  return cleaned;
+}
+
+function formatObjectToLines(value, indent = "") {
+  if (!value || typeof value !== "object") {
+    return [];
+  }
+
+  const lines = [];
+  Object.entries(value).forEach(([key, item]) => {
+    const label = `${indent}${String(key || "").trim()}`.trim();
+    if (!label) {
+      return;
+    }
+
+    if (Array.isArray(item)) {
+      lines.push(`${label}：`);
+      item.forEach((entry) => {
+        if (entry && typeof entry === "object") {
+          lines.push(`${indent}-`);
+          lines.push(...formatObjectToLines(entry, `${indent}  `));
+          return;
+        }
+        const text = String(entry || "").trim();
+        if (text) {
+          lines.push(`${indent}- ${text}`);
+        }
+      });
+      return;
+    }
+
+    if (item && typeof item === "object") {
+      lines.push(`${label}：`);
+      lines.push(...formatObjectToLines(item, `${indent}  `));
+      return;
+    }
+
+    const text = String(item || "").trim();
+    if (text) {
+      lines.push(`${label}：${text}`);
+    }
+  });
+
+  return lines;
+}
+
 function setStatus(text) {
   const status = document.getElementById("bss-status");
   if (status) {
@@ -542,6 +808,7 @@ function toggleButtons() {
   const generateBtn = document.getElementById("bss-generate-btn");
   const copyBtn = document.getElementById("bss-copy-btn");
   const downloadBtn = document.getElementById("bss-download-btn");
+  const downloadSummaryBtn = document.getElementById("bss-download-summary-btn");
   if (generateBtn) {
     generateBtn.disabled = busy;
   }
@@ -550,6 +817,9 @@ function toggleButtons() {
   }
   if (downloadBtn) {
     downloadBtn.disabled = busy || !lastTranscriptText;
+  }
+  if (downloadSummaryBtn) {
+    downloadSummaryBtn.disabled = busy || !lastSummaryText;
   }
 }
 
@@ -563,6 +833,20 @@ function onDownloadClicked() {
   const a = document.createElement("a");
   a.href = url;
   a.download = `${safeTitle}.txt`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+function onDownloadSummaryClicked() {
+  if (!lastSummaryText) {
+    return;
+  }
+  const safeTitle = lastVideoTitle.replace(/[\\/:*?"<>|]/g, "_").slice(0, 80) || "summary";
+  const blob = new Blob([lastSummaryText], { type: "text/plain;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `${safeTitle}_summary.txt`;
   a.click();
   URL.revokeObjectURL(url);
 }
