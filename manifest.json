@@ -1,0 +1,45 @@
+{
+  "manifest_version": 3,
+  "name": "Bilibili Subtitle Summarizer",
+  "description": "Fetches Bilibili subtitles and generates structured AI summaries in a sidebar.",
+  "version": "0.1.0",
+  "permissions": [
+    "storage",
+    "webRequest"
+  ],
+  "host_permissions": [
+    "https://*.bilibili.com/*",
+    "https://*.hdslb.com/*",
+    "https://*/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://www.bilibili.com/video/*",
+        "https://www.youtube.com/watch*"
+      ],
+      "js": [
+        "content.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ],
+  "options_page": "options.html",
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "styles.css"
+      ],
+      "matches": [
+        "https://www.bilibili.com/*",
+        "https://www.youtube.com/*"
+      ]
+    }
+  ],
+  "action": {
+    "default_title": "Bilibili Subtitle Summarizer"
+  }
+}

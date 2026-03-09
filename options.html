@@ -1,0 +1,180 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Bilibili Subtitle Summarizer - Options</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --bg: #f4f6fb;
+        --card: #ffffff;
+        --text: #16213c;
+        --sub: #607094;
+        --line: #d9e1f3;
+        --primary: #2b6de5;
+        --primary-hover: #205fd0;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        background: radial-gradient(circle at top right, #ecf2ff 0%, var(--bg) 55%);
+        color: var(--text);
+        font-family: "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+      }
+
+      main {
+        max-width: 900px;
+        margin: 36px auto;
+        padding: 0 24px;
+      }
+
+      .card {
+        background: var(--card);
+        border: 1px solid var(--line);
+        border-radius: 14px;
+        padding: 22px;
+        box-shadow: 0 12px 24px rgba(32, 60, 116, 0.08);
+      }
+
+      h1 {
+        margin: 0 0 6px;
+        font-size: 24px;
+      }
+
+      .desc {
+        margin: 0 0 18px;
+        color: var(--sub);
+      }
+
+      .grid {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 14px;
+      }
+
+      label {
+        display: block;
+        font-size: 13px;
+        font-weight: 600;
+        margin-bottom: 6px;
+      }
+
+      input,
+      textarea {
+        width: 100%;
+        border: 1px solid var(--line);
+        border-radius: 9px;
+        padding: 10px 12px;
+        font-size: 14px;
+        color: var(--text);
+        background: #fff;
+      }
+
+      textarea {
+        min-height: 180px;
+        resize: vertical;
+        line-height: 1.55;
+      }
+
+      .row {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(120px, 1fr));
+        gap: 12px;
+      }
+
+      .actions {
+        display: flex;
+        gap: 10px;
+        margin-top: 16px;
+      }
+
+      button {
+        border: 0;
+        border-radius: 9px;
+        height: 36px;
+        padding: 0 14px;
+        cursor: pointer;
+      }
+
+      #save-btn {
+        color: #fff;
+        background: var(--primary);
+      }
+
+      #save-btn:hover {
+        background: var(--primary-hover);
+      }
+
+      #reset-btn {
+        color: var(--primary);
+        background: #e9f0ff;
+      }
+
+      #status {
+        margin-top: 12px;
+        min-height: 18px;
+        font-size: 13px;
+        color: var(--sub);
+      }
+
+      code {
+        background: #eef3ff;
+        border-radius: 4px;
+        padding: 2px 4px;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <section class="card">
+        <h1>Bilibili Subtitle Summarizer</h1>
+        <p class="desc">
+          配置 AI 接口后，视频页侧边栏可手动生成结构化字幕摘要。当前支持 OpenAI 兼容的
+          <code>/v1/chat/completions</code>。
+        </p>
+
+        <div class="grid">
+          <div>
+            <label for="ai-endpoint">AI Endpoint</label>
+            <input id="ai-endpoint" type="text" placeholder="https://api.openai.com/v1/chat/completions" />
+          </div>
+
+          <div>
+            <label for="ai-model">Model</label>
+            <input id="ai-model" type="text" placeholder="gpt-4o-mini" />
+          </div>
+
+          <div>
+            <label for="api-key">API Key</label>
+            <input id="api-key" type="password" placeholder="sk-..." />
+          </div>
+
+          <div class="row">
+            <div>
+              <label for="max-chunk-chars">Max Chunk Chars</label>
+              <input id="max-chunk-chars" type="number" min="1000" step="500" />
+            </div>
+          </div>
+
+          <div>
+            <label for="prompt-template">Summary Prompt Template</label>
+            <textarea id="prompt-template"></textarea>
+          </div>
+        </div>
+
+        <div class="actions">
+          <button id="save-btn" type="button">保存配置</button>
+          <button id="reset-btn" type="button">恢复默认</button>
+        </div>
+        <div id="status" aria-live="polite"></div>
+      </section>
+    </main>
+
+    <script src="options.js"></script>
+  </body>
+</html>
