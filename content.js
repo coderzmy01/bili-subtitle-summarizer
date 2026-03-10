@@ -9,6 +9,7 @@ const PANEL_ID = "bss-root-panel";
 const STYLE_ID = "bss-style-link";
 const PANEL_SCALE_STORAGE_KEY = "bss-panel-scale";
 const PANEL_SIZE_STORAGE_KEY = "bss-panel-size";
+const PANEL_COLLAPSED_STORAGE_KEY = "bss-panel-collapsed";
 const PANEL_SCALE_DEFAULT = 1;
 const PANEL_SCALE_STEP = 0.1;
 const PANEL_SCALE_MIN = 0.8;
@@ -26,6 +27,8 @@ let lastTranscriptText = "";
 let lastVideoTitle = "";
 let panelScale = loadPanelScale();
 let panelBaseSize = loadPanelBaseSize();
+let panelCollapsed = loadPanelCollapsed();
+let suppressNextOpenClick = false;
 
 init();
 
@@ -154,6 +157,8 @@ function mountPanel() {
   const panel = document.createElement("aside");
   panel.id = PANEL_ID;
   panel.innerHTML = `
+    <button id="bss-open-btn" class="bss-open-btn" type="button" aria-label="打开字幕摘要面板">打开摘要</button>
+    <div class="bss-panel-main">
     <div class="bss-header">
       <div class="bss-title">字幕摘要</div>
       <div class="bss-header-right">
@@ -161,6 +166,7 @@ function mountPanel() {
         <div class="bss-zoom-actions" aria-label="面板缩放">
           <button id="bss-zoom-out-btn" class="bss-zoom-btn" type="button" aria-label="缩小面板">－</button>
           <button id="bss-zoom-in-btn" class="bss-zoom-btn" type="button" aria-label="放大面板">＋</button>
+          <button id="bss-collapse-btn" class="bss-toggle-btn" type="button" aria-label="收起字幕摘要面板">收起</button>
         </div>
       </div>
     </div>
@@ -182,6 +188,7 @@ function mountPanel() {
     <div class="bss-resize-handle bss-resize-handle-nw" data-dir="nw" aria-hidden="true"></div>
     <div class="bss-resize-handle bss-resize-handle-se" data-dir="se" aria-hidden="true"></div>
     <div class="bss-resize-handle bss-resize-handle-sw" data-dir="sw" aria-hidden="true"></div>
+    </div>
   `;
 
   document.body.appendChild(panel);
@@ -192,28 +199,37 @@ function mountPanel() {
   const downloadSummaryBtn = document.getElementById("bss-download-summary-btn");
   const zoomOutBtn = document.getElementById("bss-zoom-out-btn");
   const zoomInBtn = document.getElementById("bss-zoom-in-btn");
+  const collapseBtn = document.getElementById("bss-collapse-btn");
+  const openBtn = document.getElementById("bss-open-btn");
   generateBtn?.addEventListener("click", onGenerateClicked);
   copyBtn?.addEventListener("click", onCopyClicked);
   downloadBtn?.addEventListener("click", onDownloadClicked);
   downloadSummaryBtn?.addEventListener("click", onDownloadSummaryClicked);
   zoomOutBtn?.addEventListener("click", onZoomOutClicked);
   zoomInBtn?.addEventListener("click", onZoomInClicked);
+  collapseBtn?.addEventListener("click", onCollapseClicked);
+  openBtn?.addEventListener("click", onOpenClicked);
 
   applyPanelScale(panel);
   makePanelDraggable(panel);
   makePanelResizable(panel);
+  applyCollapsedState(panel);
 }
 
 function makePanelDraggable(panel) {
   const header = panel.querySelector(".bss-header");
-  if (!header) return;
+  const openBtn = panel.querySelector("#bss-open-btn");
+  if (!header && !openBtn) return;
 
   let isDragging = false;
+  let isOpenButtonDrag = false;
+  let hasMovedDuringDrag = false;
   let startX, startY, startLeft, startTop;
 
-  header.addEventListener("mousedown", (e) => {
-    if (e.target.tagName === "BUTTON") return;
+  const beginDrag = (e, options = {}) => {
     isDragging = true;
+    isOpenButtonDrag = Boolean(options.fromOpenButton);
+    hasMovedDuringDrag = false;
     const rect = panel.getBoundingClientRect();
     startX = e.clientX;
     startY = e.clientY;
@@ -224,10 +240,27 @@ function makePanelDraggable(panel) {
     panel.style.top = startTop + "px";
     panel.classList.add("bss-dragging");
     e.preventDefault();
+  };
+
+  header?.addEventListener("mousedown", (e) => {
+    if (e.target.tagName === "BUTTON") return;
+    beginDrag(e);
+  });
+
+  openBtn?.addEventListener("mousedown", (e) => {
+    if (!panel.classList.contains("bss-collapsed")) {
+      return;
+    }
+    beginDrag(e, { fromOpenButton: true });
   });
 
   document.addEventListener("mousemove", (e) => {
     if (!isDragging) return;
+    const deltaX = e.clientX - startX;
+    const deltaY = e.clientY - startY;
+    if (Math.abs(deltaX) > 3 || Math.abs(deltaY) > 3) {
+      hasMovedDuringDrag = true;
+    }
     const newLeft = Math.max(0, Math.min(window.innerWidth - panel.offsetWidth, startLeft + e.clientX - startX));
     const newTop = Math.max(0, Math.min(window.innerHeight - panel.offsetHeight, startTop + e.clientY - startY));
     panel.style.left = newLeft + "px";
@@ -238,6 +271,14 @@ function makePanelDraggable(panel) {
     if (isDragging) {
       isDragging = false;
       panel.classList.remove("bss-dragging");
+      if (isOpenButtonDrag && hasMovedDuringDrag) {
+        suppressNextOpenClick = true;
+        window.setTimeout(() => {
+          suppressNextOpenClick = false;
+        }, 0);
+      }
+      isOpenButtonDrag = false;
+      hasMovedDuringDrag = false;
     }
   });
 }
@@ -260,6 +301,43 @@ function onZoomOutClicked() {
 
 function onZoomInClicked() {
   adjustPanelScale(PANEL_SCALE_STEP);
+}
+
+function onCollapseClicked() {
+  setPanelCollapsed(true);
+}
+
+function onOpenClicked(event) {
+  if (suppressNextOpenClick) {
+    suppressNextOpenClick = false;
+    event.preventDefault();
+    event.stopPropagation();
+    return;
+  }
+  onExpandClicked();
+}
+
+function onExpandClicked() {
+  setPanelCollapsed(false);
+}
+
+function setPanelCollapsed(nextCollapsed) {
+  const panel = document.getElementById(PANEL_ID);
+  if (!panel) {
+    return;
+  }
+  panelCollapsed = Boolean(nextCollapsed);
+  savePanelCollapsed(panelCollapsed);
+  applyCollapsedState(panel);
+}
+
+function applyCollapsedState(panel) {
+  panel.classList.toggle("bss-collapsed", panelCollapsed);
+  if (panelCollapsed) {
+    panel.classList.remove("bss-resizing");
+    return;
+  }
+  applyPanelScale(panel);
 }
 
 function adjustPanelScale(delta) {
@@ -482,6 +560,23 @@ function loadPanelBaseSize() {
 function savePanelBaseSize(size) {
   try {
     localStorage.setItem(PANEL_SIZE_STORAGE_KEY, JSON.stringify(size));
+  } catch (_error) {
+    // Ignore storage access failures.
+  }
+}
+
+function loadPanelCollapsed() {
+  try {
+    return localStorage.getItem(PANEL_COLLAPSED_STORAGE_KEY) === "1";
+  } catch (_error) {
+    // Ignore storage access failures.
+  }
+  return false;
+}
+
+function savePanelCollapsed(value) {
+  try {
+    localStorage.setItem(PANEL_COLLAPSED_STORAGE_KEY, value ? "1" : "0");
   } catch (_error) {
     // Ignore storage access failures.
   }
